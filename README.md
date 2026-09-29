@@ -4,6 +4,7 @@
 Built for HackwithHyderabad 3.0 on [Hindsight](https://hindsight.vectorize.io) agent memory and Groq.
 
 **Live demo:** https://ledgermind-nlj7.onrender.com (free tier: the first load after idling can take ~40 s)
+**Demo video (2:29):** https://youtu.be/U5Iua_Y3Ozo
 
 ![LedgerMind reviewing a vendor's third invoice, with the Memory panel on the right](docs/screenshots/hold.png)
 
