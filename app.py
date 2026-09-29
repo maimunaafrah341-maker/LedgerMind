@@ -49,6 +49,7 @@ def state():
         "invoices": INVOICES,
         "notes": SUGGESTED_NOTES,
         "postings": db.postings(ws),
+        "reviews": db.reviews(ws),
         "model": agent.MODEL,
     })
 

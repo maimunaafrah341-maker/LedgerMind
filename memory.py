@@ -23,6 +23,9 @@ BANK_MISSION = (
     "rejections). Treat renamed charges that are economically the same as the same issue."
 )
 
+ASK_STYLE = ("Answer for a busy AP clerk: at most 120 words, short bullet points, no tables, "
+             "cite invoice numbers and amounts from memory.")
+
 _client = None
 _known_banks = set()
 
@@ -168,7 +171,7 @@ def retain_invoice(workspace, invoice, analysis, decision, note):
 def ask(workspace, vendor_slug, question):
     bid = ensure_bank(workspace)
     tags = [vendor_tag(vendor_slug)] if vendor_slug else None
-    resp = _run(client().areflect(bid, question, budget="low", tags=tags,
+    resp = _run(client().areflect(bid, question, budget="low", tags=tags, context=ASK_STYLE,
                                   tags_match="any_strict" if tags else "any", include_facts=True))
     based_on = []
     if resp.based_on and getattr(resp.based_on, "memories", None):

@@ -59,6 +59,12 @@ def get_review(workspace, key):
     return json.loads(row["payload"]) if row else None
 
 
+def reviews(workspace):
+    with _conn() as c:
+        rows = c.execute("SELECT invoice_key, payload FROM reviews WHERE workspace=?", (workspace,)).fetchall()
+    return {r["invoice_key"]: json.loads(r["payload"]) for r in rows}
+
+
 def save_posting(workspace, invoice, verdict, decision, note, at_risk, retained):
     with _conn() as c:
         c.execute("INSERT OR REPLACE INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?)",

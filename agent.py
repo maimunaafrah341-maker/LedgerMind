@@ -5,6 +5,7 @@ stateless, so the UI can show exactly what memory changed.
 """
 import json
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -14,6 +15,7 @@ from data import BUYER, VENDORS
 
 MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 _groq = None
+DISPUTE_WORDS = re.compile(r"disput|credit note|short-?paid|on hold|placed .* hold|held|reject|duplicate|overbill|revised quote|queried", re.I)
 
 
 def groq():
@@ -84,8 +86,15 @@ Return ONLY JSON:
 
 def _invoice_block(invoice):
     v = VENDORS[invoice["vendor"]]
+
+    def share(i, l):
+        # Lump-sum lines are expressed as a % of the rest, so renamed percentage surcharges stay comparable.
+        rest = sum(x["amount"] for j, x in enumerate(invoice["lines"]) if j != i)
+        return f" | = {l['amount'] / rest * 100:.2f}% of the other lines" if l["unit"] == "lot" and rest else ""
+
     lines = "\n".join(
         f"  [{i}] {l['description']} | qty {l['qty']:g} {l['unit']} | rate ₹{l['rate']:,.2f} | amount ₹{l['amount']:,.2f}"
+        f"{share(i, l)}"
         for i, l in enumerate(invoice["lines"])
     )
     return (f"VENDOR: {v['name']} ({v['category']})\nINVOICE: {invoice['number']} dated {invoice['date']}, "
@@ -93,7 +102,7 @@ def _invoice_block(invoice):
             f"SUBTOTAL ₹{invoice['subtotal']:,.2f} | GST 18% ₹{invoice['tax']:,.2f} | TOTAL ₹{invoice['total']:,.2f}")
 
 
-def _ask_llm(invoice, memories, records, rule_issues):
+def _ask_llm(invoice, memories, records, rule_issues, effort="medium"):
     if memories:
         mem = "\n".join(f"[{m['ref']}] ({m['date']}, {m['type']}) {m['text']}" for m in memories)
         mem += "\n\nSOURCE RECORDS:\n" + "\n".join(f"[{r['ref']}] {r['text']}" for r in records)
@@ -107,8 +116,8 @@ def _ask_llm(invoice, memories, records, rule_issues):
         messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
         response_format={"type": "json_object"},
         temperature=0.1,
-        reasoning_effort="low",
-        max_completion_tokens=2000,
+        reasoning_effort=effort,
+        max_completion_tokens=4000,
     )
     out = json.loads(resp.choices[0].message.content)
     out["ms"] = round((time.time() - t) * 1000)
@@ -127,6 +136,15 @@ def _normalize(out, memories):
         except (TypeError, ValueError):
             f["amount_at_risk"] = 0.0
         flags.append(f)
+    # Guard: a flag grounded in a memory of a past dispute is a recurring issue, and recurring issues are held.
+    disputed = {m["ref"] for m in memories if DISPUTE_WORDS.search(m["text"])}
+    for f in flags:
+        if f.get("kind") in ("new_charge", "price_change", "recurring_issue", "duplicate") and disputed & set(f["memory_refs"]):
+            f["recurring"], f["severity"], f["kind"] = True, "high", "recurring_issue"
+        if f.get("kind") == "duplicate":
+            f["severity"] = "high"
+    if any((f.get("recurring") or f.get("kind") == "duplicate") and f["severity"] == "high" for f in flags):
+        out["verdict"] = "hold"
     out["flags"] = flags
     out["amount_at_risk"] = round(sum(f["amount_at_risk"] for f in flags), 2)
     return out
@@ -151,7 +169,8 @@ def review(invoice, memories, records, prior_numbers):
 
     def safe(mem):
         try:
-            return _ask_llm(invoice, mem, records if mem else [], rule_issues)
+            # The stateless baseline needs less thinking; keeps us under Groq's free-tier token limits.
+            return _ask_llm(invoice, mem, records if mem else [], rule_issues, "medium" if mem else "low")
         except Exception as e:  # keep the demo alive if the LLM hiccups
             return _fallback(rule_issues, e)
 
