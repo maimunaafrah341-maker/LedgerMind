@@ -1,2 +1,6 @@
 flask==3.0.3
 reportlab==4.2.2
+hindsight-client==0.10.2
+groq>=0.30
+python-dotenv>=1.0
+gunicorn>=22.0

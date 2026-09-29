@@ -1,11 +1,36 @@
-from flask import Flask, render_template, request, send_file, redirect, url_for
-from generator import generate_invoice
-from database import init_db, save_invoice, get_all_invoices
+"""LedgerMind: an accounts-payable agent that remembers every vendor."""
 import os
+import secrets
+import time
+
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+from flask import Flask, Response, jsonify, render_template, request, session  # noqa: E402
+
+import agent  # noqa: E402
+import database as db  # noqa: E402
+import memory  # noqa: E402
+from data import BUYER, INVOICES, INVOICES_BY_KEY, SUGGESTED_NOTES, VENDORS  # noqa: E402
+from generator import dispute_notice  # noqa: E402
 
 app = Flask(__name__)
-INVOICES_DIR = "invoices"
-os.makedirs(INVOICES_DIR, exist_ok=True)
+app.secret_key = os.environ.get("SECRET_KEY", "ledgermind-dev-secret")
+db.init_db()
+
+DECISIONS = {"approve", "hold", "reject"}
+
+
+def workspace():
+    if "ws" not in session:
+        session["ws"] = secrets.token_hex(4)
+        session.permanent = True
+    return session["ws"]
+
+
+def _error(msg, code=400):
+    return jsonify({"error": msg}), code
 
 
 @app.route("/")
@@ -13,114 +38,109 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/generate", methods=["POST"])
-def generate():
+@app.get("/api/state")
+def state():
+    ws = workspace()
+    return jsonify({
+        "workspace": ws,
+        "bank": memory.bank_id(ws),
+        "buyer": BUYER,
+        "vendors": list(VENDORS.values()),
+        "invoices": INVOICES,
+        "notes": SUGGESTED_NOTES,
+        "postings": db.postings(ws),
+        "model": agent.MODEL,
+    })
 
-    # ── Validate Client Name ──────────────────────────────────
-    client_name = request.form.get("client_name", "").strip()
-    client_email = request.form.get("client_email", "").strip()
-    client_addr = request.form.get("client_address", "").strip()
 
-    if not client_name:
-        return render_template("index.html", error="Client name is required.")
-
-    # ── Parse & Validate Line Items ───────────────────────────
-    item_names  = request.form.getlist("item_name[]")
-    item_qtys   = request.form.getlist("item_qty[]")
-    item_prices = request.form.getlist("item_price[]")
-
-    items = []
-    for name, qty, price in zip(item_names, item_qtys, item_prices):
-        name  = name.strip()
-        qty   = qty.strip()
-        price = price.strip()
-
-        if not (name and qty and price):
-            continue  # skip blank rows silently
-
-        try:
-            qty_val   = int(qty)
-            price_val = float(price)
-        except ValueError:
-            return render_template(
-                "index.html",
-                error=f"Quantity and price must be valid numbers. Check item '{name}'."
-            )
-
-        if qty_val <= 0:
-            return render_template(
-                "index.html",
-                error=f"Quantity must be greater than zero. Check item '{name}'."
-            )
-        if price_val < 0:
-            return render_template(
-                "index.html",
-                error=f"Price cannot be negative. Check item '{name}'."
-            )
-
-        items.append({"name": name, "qty": qty_val, "price": price_val})
-
-    if not items:
-        return render_template("index.html", error="Please add at least one item.")
-
-    # ── Parse Tax Rate ────────────────────────────────────────
+@app.post("/api/analyze/<key>")
+def analyze(key):
+    invoice = INVOICES_BY_KEY.get(key)
+    if not invoice:
+        return _error("Unknown invoice", 404)
+    ws = workspace()
+    t = time.time()
     try:
-        tax_raw  = request.form.get("tax_rate", "0") or "0"
-        tax_rate = float(tax_raw) / 100
-    except ValueError:
-        tax_rate = 0.0
-
-    notes = request.form.get("notes", "").strip()
-
-    invoice_data = {
-        "client_name":    client_name,
-        "client_email":   client_email,
-        "client_address": client_addr,
-        "items":          items,
-        "tax_rate":       tax_rate,
-        "notes":          notes
-    }
-
-    # ── Generate PDF ──────────────────────────────────────────
-    try:
-        invoice_id, filename, total = generate_invoice(invoice_data, INVOICES_DIR)
+        recalled = memory.recall_vendor(ws, invoice)
     except Exception as e:
-        return render_template("index.html", error=f"PDF generation failed: {str(e)}")
+        return _error(f"Hindsight recall failed: {e}", 502)
+    prior = {p["number"] for p in db.postings(ws) if p["invoice_key"] != key}
+    result = agent.review(invoice, recalled["memories"], recalled["records"], prior)
+    payload = {**recalled, **result, "invoice_key": key, "total_ms": round((time.time() - t) * 1000)}
+    db.save_review(ws, key, payload)
+    return jsonify(payload)
 
-    # ── Save to Database ──────────────────────────────────────
+
+@app.post("/api/commit/<key>")
+def commit(key):
+    invoice = INVOICES_BY_KEY.get(key)
+    body = request.get_json(silent=True) or {}
+    decision, note = body.get("decision"), (body.get("note") or "").strip()[:1500]
+    if not invoice:
+        return _error("Unknown invoice", 404)
+    if decision not in DECISIONS:
+        return _error("Decision must be approve, hold or reject")
+    ws = workspace()
+    review = db.get_review(ws, key)
+    if not review:
+        return _error("Examine the invoice before posting it")
+    analysis = review["with_memory"]
     try:
-        save_invoice(invoice_id, client_name, total, filename)
+        retained = memory.retain_invoice(ws, invoice, analysis, decision, note)
     except Exception as e:
-        return render_template("index.html", error=f"Could not save invoice record: {str(e)}")
-
-    return redirect(url_for("success",
-                            invoice_id=invoice_id,
-                            filename=filename,
-                            total=f"{total:.2f}"))
+        return _error(f"Hindsight retain failed: {e}", 502)
+    db.save_posting(ws, invoice, analysis["verdict"], decision, note, analysis.get("amount_at_risk") or 0,
+                    retained["content"])
+    return jsonify({"retained": retained, "postings": db.postings(ws)})
 
 
-@app.route("/success")
-def success():
-    return render_template("success.html",
-                           invoice_id=request.args.get("invoice_id"),
-                           filename=request.args.get("filename"),
-                           total=request.args.get("total"))
+@app.post("/api/ask")
+def ask():
+    body = request.get_json(silent=True) or {}
+    question = (body.get("question") or "").strip()[:500]
+    vendor = body.get("vendor")
+    if not question:
+        return _error("Ask a question")
+    if vendor and vendor not in VENDORS:
+        return _error("Unknown vendor", 404)
+    try:
+        return jsonify(memory.ask(workspace(), vendor, question))
+    except Exception as e:
+        return _error(f"Hindsight reflect failed: {e}", 502)
 
 
-@app.route("/download/<filename>")
-def download(filename):
-    path = os.path.join(INVOICES_DIR, filename)
-    if not os.path.exists(path):
-        return render_template("index.html", error="Invoice file not found.")
-    return send_file(path, as_attachment=True)
+@app.get("/api/vendor/<slug>/memory")
+def vendor_memory(slug):
+    if slug not in VENDORS:
+        return _error("Unknown vendor", 404)
+    try:
+        return jsonify({"memories": memory.vendor_memories(workspace(), slug)})
+    except Exception as e:
+        return _error(f"Hindsight recall failed: {e}", 502)
 
 
-@app.route("/history")
-def history():
-    invoices = get_all_invoices()
-    return render_template("history.html", invoices=invoices)
+@app.get("/api/dispute/<key>.pdf")
+def dispute(key):
+    invoice = INVOICES_BY_KEY.get(key)
+    ws = workspace()
+    review = db.get_review(ws, key) if invoice else None
+    if not review:
+        return _error("No review for this invoice yet", 404)
+    note = next((p["note"] for p in db.postings(ws) if p["invoice_key"] == key), "")
+    pdf = dispute_notice(invoice, review, note)
+    filename = f"dispute-{invoice['number'].replace('/', '-')}.pdf"
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
+@app.post("/api/reset")
+def reset():
+    ws = workspace()
+    memory.reset_bank(ws)
+    db.clear_workspace(ws)
+    session["ws"] = secrets.token_hex(4)
+    return jsonify({"workspace": session["ws"]})
 
 
 if __name__ == "__main__":
-    init_db()
-    app.run(debug=True)
+    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))

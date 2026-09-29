@@ -1,186 +1,96 @@
-from reportlab.lib.pagesizes import A4
+"""Generates the vendor dispute / short-payment notice PDF for a held invoice."""
+from datetime import datetime
+from io import BytesIO
+
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle,
-    Paragraph, Spacer, HRFlowable
-)
-from reportlab.lib.enums import TA_RIGHT, TA_CENTER
-from datetime import datetime
-import uuid
-import os
+from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-# ── Colour Palette ────────────────────────────────────────────────────────────
-ACCENT = colors.HexColor("#4338ca")
-DARK   = colors.HexColor("#1e1b4b")
-GRAY   = colors.HexColor("#6b7280")
-SOFT   = colors.HexColor("#eef2ff")
-WHITE  = colors.white
+from data import BUYER, VENDORS
 
-# ── Paragraph Styles (defined once at module level) ───────────────────────────
-STYLE_LOGO          = ParagraphStyle("logo", fontSize=24, fontName="Helvetica-Bold", textColor=ACCENT, leading=28)
-STYLE_INVOICE_TITLE = ParagraphStyle("invoice", fontSize=24, fontName="Helvetica-Bold", textColor=DARK, alignment=TA_RIGHT, leading=28)
-STYLE_TAGLINE       = ParagraphStyle("tagline", fontSize=9, fontName="Helvetica", textColor=GRAY)
-STYLE_INVOICE_ID    = ParagraphStyle("invoiceid", fontSize=9, textColor=GRAY, alignment=TA_RIGHT)
-STYLE_BILL          = ParagraphStyle("bill", fontSize=11, textColor=DARK)
-STYLE_DETAILS       = ParagraphStyle("details", fontSize=11, textColor=DARK, alignment=TA_RIGHT)
-STYLE_CLIENT        = ParagraphStyle("client", fontSize=14, fontName="Helvetica-Bold", textColor=DARK, leading=18)
-STYLE_META          = ParagraphStyle("meta", fontSize=9, textColor=GRAY, alignment=TA_RIGHT, leading=16)
-STYLE_EMAIL         = ParagraphStyle("email", fontSize=10, textColor=GRAY)
-STYLE_ADDRESS       = ParagraphStyle("address", fontSize=10, textColor=GRAY)
-STYLE_NOTE_HEAD     = ParagraphStyle("notehead", fontSize=11, fontName="Helvetica-Bold", textColor=DARK)
-STYLE_NOTE_BODY     = ParagraphStyle("notebody", fontSize=9, textColor=GRAY, leading=16)
-STYLE_FOOTER        = ParagraphStyle("footer", fontSize=8, textColor=GRAY, alignment=TA_CENTER)
+# ── Ledger palette (matches the web UI) ───────────────────────────────────────
+INK = colors.HexColor("#1B2420")
+GREEN = colors.HexColor("#2F5D50")
+RED = colors.HexColor("#B3261E")
+RULE = colors.HexColor("#9DB4CF")
+PAPER = colors.HexColor("#F6F2E7")
+MUTED = colors.HexColor("#5E6660")
+
+S_BRAND = ParagraphStyle("brand", fontName="Times-Bold", fontSize=22, textColor=GREEN, leading=26)
+S_TITLE = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=13, textColor=RED, alignment=TA_RIGHT)
+S_META = ParagraphStyle("meta", fontName="Helvetica", fontSize=9, textColor=MUTED, leading=13)
+S_META_R = ParagraphStyle("metar", parent=S_META, alignment=TA_RIGHT)
+S_BODY = ParagraphStyle("body", fontName="Helvetica", fontSize=10, textColor=INK, leading=15)
+S_HEAD = ParagraphStyle("head", fontName="Helvetica-Bold", fontSize=10.5, textColor=INK, spaceBefore=6)
+S_CELL = ParagraphStyle("cell", fontName="Helvetica", fontSize=8.5, textColor=INK, leading=11)
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+def _pdf_text(s):
+    # Base-14 fonts lack these glyphs.
+    return (s or "").replace("₹", "Rs. ").replace("→", "to").replace("−", "-")
+
+
 def money(x):
     return f"Rs. {x:,.2f}"
 
 
-# ── Modular Build Functions ───────────────────────────────────────────────────
+def dispute_notice(invoice, review, note):
+    vendor = VENDORS[invoice["vendor"]]
+    analysis = review["with_memory"]
+    flags = analysis.get("flags") or []
+    flagged_lines = {f.get("line_index") for f in flags if f.get("line_index") is not None}
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm,
+                            topMargin=1.8 * cm, bottomMargin=1.8 * cm,
+                            title=f"Dispute notice {invoice['number']}")
 
-def _build_header(invoice_id):
-    """Returns the logo + INVOICE title block."""
-    header_data = [
-        [Paragraph("LedgerMind", STYLE_LOGO),               Paragraph("INVOICE", STYLE_INVOICE_TITLE)],
-        [Paragraph("Accounts Payable Agent", STYLE_TAGLINE), Paragraph(invoice_id, STYLE_INVOICE_ID)]
+    header = Table([[Paragraph("LedgerMind", S_BRAND), Paragraph("INVOICE DISPUTE NOTICE", S_TITLE)],
+                    [Paragraph(f"{BUYER['name']}<br/>{BUYER['address']}<br/>GSTIN {BUYER['gstin']}", S_META),
+                     Paragraph(f"Date: {datetime.now():%d %b %Y}<br/>Ref: {invoice['number']}<br/>PO: {invoice['po']}",
+                               S_META_R)]],
+                   colWidths=[9.5 * cm, 7.5 * cm])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+
+    rows = [["#", "Description", "Qty", "Rate", "Amount", "Status"]]
+    for i, l in enumerate(invoice["lines"]):
+        rows.append([str(i + 1), Paragraph(_pdf_text(l["description"]), S_CELL), f"{l['qty']:g}",
+                     money(l["rate"]), money(l["amount"]), "DISPUTED" if i in flagged_lines else "OK"])
+    rows += [["", "", "", "Subtotal", money(invoice["subtotal"]), ""],
+             ["", "", "", "GST 18%", money(invoice["tax"]), ""],
+             ["", "", "", "Invoiced", money(invoice["total"]), ""]]
+    t = Table(rows, colWidths=[0.8 * cm, 7.2 * cm, 1.3 * cm, 2.6 * cm, 2.9 * cm, 2.2 * cm], repeatRows=1)
+    style = [
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), GREEN), ("LINEBELOW", (0, 0), (-1, 0), 1, GREEN),
+        ("LINEBELOW", (0, 1), (-1, -4), 0.4, RULE), ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("FONTNAME", (3, -3), (-1, -1), "Helvetica-Bold"), ("LINEABOVE", (3, -1), (4, -1), 1, INK),
     ]
-    table = Table(header_data, colWidths=[9*cm, 7*cm])
-    table.setStyle(TableStyle([
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-    ]))
-    return table
+    for i in flagged_lines:
+        style += [("TEXTCOLOR", (0, i + 1), (-1, i + 1), RED), ("BACKGROUND", (0, i + 1), (-1, i + 1), PAPER)]
+    t.setStyle(TableStyle(style))
 
-
-def _build_client_info(data, date):
-    """Returns the Bill To / Invoice Details block."""
-    info_data = [
-        [
-            Paragraph("<b>Bill To</b>",         STYLE_BILL),
-            Paragraph("<b>Invoice Details</b>",  STYLE_DETAILS)
-        ],
-        [
-            Paragraph(data["client_name"], STYLE_CLIENT),
-            Paragraph(f"<b>Date:</b> {date}<br/><b>Status:</b> Generated", STYLE_META)
-        ],
-        [Paragraph(data.get("client_email",   ""), STYLE_EMAIL),   ""],
-        [Paragraph(data.get("client_address", ""), STYLE_ADDRESS), ""]
-    ]
-    table = Table(info_data, colWidths=[10*cm, 6*cm])
-    table.setStyle(TableStyle([
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-    ]))
-    return table
-
-
-def _build_items_table(items, tax_rate):
-    """Builds the line-items table and returns (table, total)."""
-    rows = [["#", "Description", "Qty", "Price", "Amount"]]
-    subtotal = 0
-
-    for i, item in enumerate(items, start=1):
-        line_total = item["qty"] * item["price"]
-        subtotal  += line_total
-        rows.append([
-            str(i), item["name"], str(item["qty"]),
-            money(item["price"]), money(line_total)
-        ])
-
-    tax_amount = subtotal * tax_rate
-    total      = subtotal + tax_amount
-
-    rows.append(["", "", "", "Subtotal", money(subtotal)])
-    if tax_rate > 0:
-        rows.append(["", "", "", f"Tax ({int(tax_rate * 100)}%)", money(tax_amount)])
-    rows.append(["", "", "", "TOTAL", money(total)])
-
-    total_row = len(rows) - 1
-
-    table = Table(rows,
-                  colWidths=[1*cm, 7.5*cm, 2*cm, 2.8*cm, 3*cm],
-                  repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 0),  (-1, 0),                ACCENT),
-        ("TEXTCOLOR",     (0, 0),  (-1, 0),                WHITE),
-        ("FONTNAME",      (0, 0),  (-1, 0),                "Helvetica-Bold"),
-        ("FONTSIZE",      (0, 0),  (-1, 0),                10),
-        ("TOPPADDING",    (0, 0),  (-1, 0),                10),
-        ("BOTTOMPADDING", (0, 0),  (-1, 0),                10),
-        ("FONTNAME",      (0, 1),  (-1, -1),               "Helvetica"),
-        ("FONTSIZE",      (0, 1),  (-1, -1),               9),
-        ("ROWBACKGROUNDS",(0, 1),  (-1, -4),               [WHITE, SOFT]),
-        ("TOPPADDING",    (0, 1),  (-1, -1),               8),
-        ("BOTTOMPADDING", (0, 1),  (-1, -1),               8),
-        ("LINEBELOW",     (0, 1),  (-1, -4),               0.3, colors.HexColor("#e5e7eb")),
-        ("ALIGN",         (0, 0),  (0, -1),                "CENTER"),
-        ("ALIGN",         (2, 0),  (-1, -1),               "RIGHT"),
-        ("FONTNAME",      (3, -3), (-1, -1),               "Helvetica-Bold"),
-        ("BACKGROUND",    (3, total_row), (-1, total_row), ACCENT),
-        ("TEXTCOLOR",     (3, total_row), (-1, total_row), WHITE),
-        ("TOPPADDING",    (3, total_row), (-1, total_row), 10),
-        ("BOTTOMPADDING", (3, total_row), (-1, total_row), 10),
-        ("FONTSIZE",      (3, total_row), (-1, total_row), 11),
-    ]))
-
-    return table, total
-
-
-def _build_notes(notes):
-    """Returns notes section as a list of flowables."""
-    return [
-        Spacer(1, 0.8*cm),
-        Paragraph("Notes", STYLE_NOTE_HEAD),
-        Spacer(1, 0.12*cm),
-        Paragraph(notes, STYLE_NOTE_BODY)
-    ]
-
-
-def _build_footer():
-    """Returns the footer divider and credit line."""
-    return [
-        Spacer(1, 1.3*cm),
-        HRFlowable(width="100%", thickness=0.5,
-                   color=colors.HexColor("#d1d5db"), spaceAfter=8),
-        Paragraph("Processed by LedgerMind • Accounts Payable Agent", STYLE_FOOTER)
-    ]
-
-
-# ── Main Entry Point ──────────────────────────────────────────────────────────
-
-def generate_invoice(data, output_dir):
-    """
-    Orchestrates invoice generation by calling focused helper functions.
-    Each section of the PDF is built independently and assembled here.
-    """
-    invoice_id = f"INV-{datetime.now().strftime('%Y%m')}-{str(uuid.uuid4())[:6].upper()}"
-    filename   = f"{invoice_id}.pdf"
-    filepath   = os.path.join(output_dir, filename)
-
-    doc = SimpleDocTemplate(
-        filepath, pagesize=A4,
-        leftMargin=2*cm, rightMargin=2*cm,
-        topMargin=1.8*cm, bottomMargin=1.8*cm
-    )
-
-    date = datetime.now().strftime("%B %d, %Y")
-    items_table, total = _build_items_table(data["items"], data.get("tax_rate", 0))
-
-    story = [
-        _build_header(invoice_id),
-        HRFlowable(width="100%", thickness=1.2, color=ACCENT, spaceBefore=10, spaceAfter=18),
-        _build_client_info(data, date),
-        Spacer(1, 0.7*cm),
-        items_table,
-    ]
-
-    if data.get("notes"):
-        story.extend(_build_notes(data["notes"]))
-
-    story.extend(_build_footer())
-
+    story = [header, HRFlowable(width="100%", thickness=1.2, color=GREEN, spaceBefore=8, spaceAfter=14),
+             Paragraph(f"To: Accounts Receivable, <b>{vendor['name']}</b>, {vendor['city']} (GSTIN {vendor['gstin']})",
+                       S_BODY),
+             Spacer(1, 8),
+             Paragraph(f"We have reviewed invoice <b>{invoice['number']}</b> dated {invoice['date']} and are unable to "
+                       f"release it in full for the reasons below.", S_BODY),
+             Spacer(1, 10), t, Spacer(1, 12), Paragraph("Discrepancies", S_HEAD)]
+    for n, f in enumerate(flags, 1):
+        tag = " (recurring)" if f.get("recurring") else ""
+        story.append(Paragraph(f"{n}. <b>{_pdf_text(f.get('title'))}</b>{tag}: {_pdf_text(f.get('detail'))}", S_BODY))
+    at_risk = analysis.get("amount_at_risk") or 0
+    if at_risk:
+        story += [Spacer(1, 8), Paragraph(
+            f"Amount withheld: <b>{money(at_risk)}</b> plus applicable GST. Please issue a credit note or a revised "
+            f"invoice. Payment terms remain as agreed in the purchase order.", S_BODY)]
+    if note:
+        story += [Paragraph("AP note", S_HEAD), Paragraph(_pdf_text(note), S_BODY)]
+    story += [Spacer(1, 24), HRFlowable(width="100%", thickness=0.5, color=RULE, spaceAfter=6),
+              Paragraph("Prepared by LedgerMind, the accounts-payable agent with vendor memory by Hindsight.", S_META)]
     doc.build(story)
-    return invoice_id, filename, total
+    return buf.getvalue()
