@@ -42,6 +42,11 @@ Deccan Cold Chain Logistics bills Golconda Fresh Foods three times:
 Both reviews use the same invoice and the same model. The only difference is memory. The UI puts both
 verdicts side by side on every invoice.
 
+![Invoice 3 carries an "HSD price escalation adjustment" of ₹14,190, while the Memory panel already recalls the August credit note](docs/screenshots/invoice-3-renamed-charge.png)
+*Invoice 3 in September carries an "HSD price escalation adjustment (diesel index)" of ₹14,190, which is the same 7.5% charge
+under a new name. On its own, the line looks legitimate. On the right, the Memory panel already holds the August dispute
+and credit note CN-DCCL-0098, which is what lets LedgerMind connect the two.*
+
 Two bonus vendors show other recurring patterns: **Kaveri Office Supplies** (A4 paper price creep from ₹245
 to ₹268 to ₹289) and **Sree Lakshmi Packaging** (a paid invoice resubmitted as a duplicate).
 
