@@ -64,6 +64,11 @@ each recalled memory with its date, type (fact or learned pattern), relevance an
 on a memory, it is labelled **"cited by flag N"**. Hovering a flag lights up the memory behind it. After posting,
 the exact text written with `retain()` appears at the end of the panel.
 
+![Before invoice 3 is examined, the Memory panel already holds the August dispute and credit note CN-DCCL-0098](docs/screenshots/memory-before-invoice-3.png)
+*Before invoice 3 is even examined, the Memory panel shows what LedgerMind has learned about Deccan Cold Chain:
+the disputed August fuel surcharge and the ₹16,894.65 credit note, stored both as raw facts and as Hindsight's
+consolidated "learned patterns".*
+
 ---
 
 ## Architecture
