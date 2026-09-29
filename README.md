@@ -104,12 +104,16 @@ Browser (vanilla JS)                          Flask (app.py)
 
 ## Design
 
-The UI is a ledger folio, not a dashboard template. The invoice sits on ruled paper with the red double margin
-rule of an account book. Flags are numbered **red-ink** margin notes, and memory is a dated thread in
-**highlighter amber** beside the page.
-Palette: paper `#F5F1E6` · ink `#1B2420` · bookkeeper green `#2F5D50` · red ink `#B3261E` · ruling blue `#9DB4CF`
-· memory `#E9B949`. Type: Newsreader (headings, verdicts), IBM Plex Sans (interface), IBM Plex Mono with tabular
-figures (every rupee amount).
+A modern product layout with an account book's character. The structure is SaaS: a sticky app bar, a 3-step flow,
+a single primary action, and a sticky memory panel. The details are a ledger: warm ruled paper, the invoice's red double margin
+rule, red-ink flag numbers in the margin, and a rubber-stamp verdict.
+
+Colour has a job: **indigo** is for actions, **amber** is for anything Hindsight recalled or stored, and green and red are
+reserved for money decisions.
+Tokens: paper `#F4F1E8` · ink `#111827` · indigo `#4338CA` · memory amber `#D97706` · red ink `#B3261E`
+· ruling blue `#C9D6E6`. Type: Newsreader (names, verdicts, headlines), Inter (interface), JetBrains Mono with
+tabular figures (every rupee amount). Everything is defined as CSS custom properties at the top of
+[`static/app.css`](static/app.css), with a dark-mode set, and respects `prefers-reduced-motion`.
 
 ---
 

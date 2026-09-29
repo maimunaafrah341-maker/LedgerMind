@@ -1,11 +1,22 @@
-// LedgerMind front end: vendor book, invoice folio, and the Hindsight memory thread.
+// LedgerMind front end: vendors, invoice, verdict, and the Hindsight memory panel.
 const $ = (s) => document.querySelector(s);
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
 const money = (x) => inr.format(x || 0);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
+const shortDate = (d) => fmtDate(d).replace(/ \d{4}$/, "");
+const initials = (s) => s.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 const VERDICT = { approve: "Approve", review: "Review", hold: "Hold" };
 const STATUS = { approve: "approved", hold: "held", reject: "rejected" };
+
+// Small inline icon set (stroke icons, 24px grid) so there are no icon-font dependencies.
+const ICON = {
+  memory: `<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>`,
+  scan: `<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>`,
+  check: `<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>`,
+  save: `<svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>`,
+  file: `<svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`,
+};
 
 const S = { vendors: [], invoices: [], notes: {}, postings: [], reviews: {}, retained: {}, current: null, busy: false };
 
@@ -19,6 +30,7 @@ async function api(path, opts = {}) {
 const inv = (key) => S.invoices.find((i) => i.key === key);
 const vendorOf = (i) => S.vendors.find((v) => v.slug === i.vendor);
 const posting = (key) => S.postings.find((p) => p.invoice_key === key);
+const vendorList = (i) => S.invoices.filter((x) => x.vendor === i.vendor);
 
 // ── Load ──────────────────────────────────────────────────────────────────
 async function load() {
@@ -27,30 +39,51 @@ async function load() {
   st.postings.forEach((p) => { if (p.retained && !S.retained[p.invoice_key]) S.retained[p.invoice_key] = { content: p.retained }; });
   $("#bank-id").textContent = st.bank;
   $("#model").textContent = st.model;
-  $("#buyer").innerHTML = `Books of <b>${esc(st.buyer.name)}</b>${esc(st.buyer.address)}`;
-  renderBook();
+  $("#buyer").innerHTML = `Books of <b>${esc(st.buyer.name)}</b>`;
   renderTally();
   const next = S.invoices.find((i) => !posting(i.key)) || S.invoices[0];
   select(next.key);
 }
 
 function renderBook() {
+  const currentVendor = S.current && inv(S.current).vendor;
   $("#vendors").innerHTML = S.vendors.map((v) => {
-    const tabs = S.invoices.filter((i) => i.vendor === v.slug).map((i, n) => {
+    const steps = S.invoices.filter((i) => i.vendor === v.slug).map((i, n) => {
       const p = posting(i.key);
-      return `<button class="inv-tab ${S.current === i.key ? "is-active" : ""}" data-key="${i.key}" data-status="${p ? p.decision : ""}" type="button">
-        <b>Inv ${n + 1}</b><span>${p ? STATUS[p.decision] : fmtDate(i.date).replace(/ \d{4}$/, "")}</span></button>`;
+      return `<button class="step ${S.current === i.key ? "is-active" : ""}" data-key="${i.key}" data-status="${p ? p.decision : ""}" type="button"
+          aria-label="Invoice ${n + 1} from ${esc(v.short)}${p ? `, ${STATUS[p.decision]}` : ""}">
+        <span class="step-node">${p ? (p.decision === "approve" ? "✓" : "!") : n + 1}</span>
+        <span class="step-label">${p ? STATUS[p.decision] : shortDate(i.date)}</span></button>`;
     }).join("");
-    return `<li class="vendor ${v.headline ? "is-headline" : ""}"><h3>${esc(v.short)}</h3><p>${esc(v.category)}</p><div class="inv-tabs">${tabs}</div></li>`;
+    return `<li class="vendor ${v.slug === currentVendor ? "is-selected" : ""}">
+      <div class="vendor-top"><span class="avatar">${initials(v.short)}</span>
+        <div><h3>${esc(v.short)}</h3><p class="vendor-cat">${esc(v.category)}</p></div></div>
+      ${v.headline ? `<span class="badge badge-memory">Start here · main demo</span>` : ""}
+      <div class="stepper">${steps}</div></li>`;
   }).join("");
+}
+
+// Count numbers up in the header so changes are noticed during a demo.
+function countTo(el, value, fmt) {
+  const from = Number(el.dataset.v || 0);
+  el.dataset.v = value;
+  if (from === value) { el.textContent = fmt(value); return; }
+  const t0 = performance.now(), dur = 700;
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(from + (value - from) * e);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
 }
 
 function renderTally() {
   const flags = S.postings.reduce((n, p) => n + (S.reviews[p.invoice_key]?.with_memory.flags.length ?? (p.verdict === "approve" ? 0 : 1)), 0);
   const saved = S.postings.filter((p) => p.decision !== "approve").reduce((s, p) => s + (p.at_risk || 0), 0);
-  $("#t-posted").textContent = S.postings.length;
-  $("#t-flags").textContent = flags;
-  $("#t-saved").textContent = money(saved).replace(/\.00$/, "");
+  countTo($("#t-posted"), S.postings.length, (x) => Math.round(x));
+  countTo($("#t-flags"), flags, (x) => Math.round(x));
+  countTo($("#t-saved"), saved, (x) => money(Math.round(x)).replace(/\.00$/, ""));
 }
 
 // ── Select an invoice ─────────────────────────────────────────────────────
@@ -60,8 +93,9 @@ function select(key) {
   const i = inv(key), v = vendorOf(i);
   renderBook();
   renderSheet(i, S.reviews[key]);
+  $("#memory-vendor").textContent = v.name;
   $("#ask-vendor").textContent = v.short;
-  $("#ask-chips").innerHTML = [`What should I check before paying ${v.short}?`, "Have they ever been disputed?", "What are their usual rates and terms?"]
+  $("#ask-chips").innerHTML = [`What should I check before paying ${v.short}?`, "Have they ever been disputed?", "Usual rates and terms?"]
     .map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("");
   $("#answer").hidden = true;
   const review = S.reviews[key];
@@ -71,43 +105,37 @@ function select(key) {
   renderCoach(i);
 }
 
-// ── Coach: tells a first-time viewer where they are and what to click next ──
+// ── Coach + flow: tells a first-time viewer where they are and what to do next ──
 function renderCoach(i) {
   const v = vendorOf(i);
-  const list = S.invoices.filter((x) => x.vendor === i.vendor);
+  const list = vendorList(i);
   const n = list.indexOf(i) + 1;
   const p = posting(i.key), review = S.reviews[i.key];
   const phase = p ? 3 : review ? 2 : 1;
   const next = list.find((x) => !posting(x.key) && x.key !== i.key);
   const nextNo = next ? list.indexOf(next) + 1 : 0;
-  const trail = list.map((x, k) => {
-    const px = posting(x.key);
-    return `<span class="trail-item ${x.key === i.key ? "is-here" : ""} ${px ? `is-${px.decision}` : ""}">Invoice ${k + 1}${px ? ` · ${STATUS[px.decision]}` : ""}</span>`;
-  }).join(`<span class="trail-sep" aria-hidden="true"></span>`);
+
+  document.querySelectorAll("#flow li").forEach((li) => {
+    const s = Number(li.dataset.step);
+    li.classList.toggle("is-active", s === phase);
+    li.classList.toggle("is-done", s < phase || (phase === 3 && s === 3));
+  });
+
   const text = {
     1: n === 1
-      ? `<b>Start here.</b> LedgerMind checks supplier invoices before they are paid, and remembers every supplier.
-         This is ${esc(v.short)}'s first invoice, so its memory is empty. Examine it to see the baseline.`
-      : `<b>Now watch memory work.</b> Before reviewing, LedgerMind will recall what it learned from
-         ${n > 2 ? "the earlier invoices" : "invoice 1"} (right-hand panel) and use it to judge this one.`,
-    2: `<b>Read the verdict below</b>, then post a decision at the bottom. Your decision and note are saved to
-        LedgerMind's memory${review?.memories.length ? `. It found ${review.memories.length} memories this time` : ""}.`,
-    3: next ? `<b>Saved to memory.</b> Open invoice ${nextNo} and see whether LedgerMind spots anything using what it just learned.`
-            : `<b>All of ${esc(v.short)}'s invoices are done.</b> Ask the ledger a question on the right, or pick another supplier.`,
+      ? `<b>Invoice ${n} of ${list.length}.</b> ${esc(v.short)} is new, so memory is empty. Click <b>Examine with memory</b> to set the baseline.`
+      : `<b>Invoice ${n} of ${list.length}.</b> Watch the Memory panel: LedgerMind will recall what it learned from ${n > 2 ? "earlier invoices" : "invoice 1"} before judging this one.`,
+    2: `<b>Verdict ready${review?.memories.length ? `, using ${review.memories.length} memories` : ""}.</b> Check the flags, then post your decision. It gets saved to memory.`,
+    3: next ? `<b>Saved to memory.</b> Now open invoice ${nextNo} and see if LedgerMind catches anything with what it just learned.`
+            : `<b>All of ${esc(v.short)}'s invoices are done.</b> Ask memory a question on the right, or pick another vendor.`,
   }[phase];
-  const btn = phase === 1 ? `<button class="btn btn-ink" type="button" data-coach="examine">Examine invoice ${n}</button>`
-    : phase === 2 ? `<button class="btn" type="button" data-coach="decide">Go to decision</button>`
-    : next ? `<button class="btn btn-ink" type="button" data-coach="next">Open invoice ${nextNo}</button>` : "";
-  $("#guide").innerHTML = `
-    <div class="coach-top"><span class="coach-step">Step ${phase} of 3 · ${["Examine", "Decide", "Next invoice"][phase - 1]}</span>
-      <span class="trail">${trail}</span></div>
-    <div class="coach-row"><p>${text}</p>${btn}</div>`;
-  const b = $("#guide [data-coach]");
-  if (b) b.onclick = () => {
-    if (b.dataset.coach === "examine") { examine(i.key); $("#steps")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
-    else if (b.dataset.coach === "decide") $("#post").scrollIntoView({ behavior: "smooth", block: "center" });
-    else select(next.key);
-  };
+  const btn = phase === 2 ? `<button class="btn btn-sm" type="button" data-coach="decide">Go to decision</button>`
+    : phase === 3 && next ? `<button class="btn btn-primary btn-sm" type="button" data-coach="next">Open invoice ${nextNo}</button>` : "";
+  const guide = $("#guide");
+  guide.className = `coach ${phase === 3 ? "is-memory" : ""}`;
+  guide.innerHTML = `<span class="coach-icon">${phase}</span><p>${text}</p>${btn}`;
+  const b = guide.querySelector("[data-coach]");
+  if (b) b.onclick = () => (b.dataset.coach === "decide" ? $("#post").scrollIntoView({ behavior: "smooth", block: "center" }) : select(next.key));
 }
 
 function renderSheet(i, review) {
@@ -116,72 +144,82 @@ function renderSheet(i, review) {
   const lineFlag = {};
   flags.forEach((f, n) => { if (Number.isInteger(f.line_index)) lineFlag[f.line_index] = n + 1; });
   const termsFlagged = flags.some((f) => f.kind === "terms_change");
-  const rows = i.lines.map((l, n) => `
-    <tr class="${lineFlag[n] ? "is-flagged" : ""}">
-      <td>${lineFlag[n] ? `<span class="margin-note" title="Flag ${lineFlag[n]}">${lineFlag[n]}</span>` : ""}${esc(l.description)}</td>
+  const n = vendorList(i).indexOf(i) + 1;
+  const rows = i.lines.map((l, k) => `
+    <tr class="${lineFlag[k] ? "is-flagged" : ""}">
+      <td>${lineFlag[k] ? `<span class="flag-pin" title="Flag ${lineFlag[k]}">${lineFlag[k]}</span>` : ""}${esc(l.description)}</td>
       <td class="r hide-sm">${l.qty.toLocaleString("en-IN")} ${esc(l.unit)}</td>
       <td class="r hide-sm">${money(l.rate)}</td>
       <td class="r">${money(l.amount)}</td>
     </tr>`).join("");
+  const cols = matchMedia("(max-width: 860px)").matches ? 1 : 3; // qty/rate are hidden on phones
   $("#sheet").innerHTML = `
-    <div class="sheet-head">
-      <div><h1>${esc(v.name)}</h1><p class="from">${esc(v.city)} · GSTIN ${esc(v.gstin)}</p></div>
-      <dl class="meta">
-        <dt>Invoice</dt><dd>${esc(i.number)}</dd>
-        <dt>Dated</dt><dd>${fmtDate(i.date)}</dd>
-        <dt>PO</dt><dd>${esc(i.po)}</dd>
-        <dt>Terms</dt><dd class="${termsFlagged ? "is-flagged" : ""}">Net ${i.terms_days}</dd>
-      </dl>
+    <div class="invoice-head">
+      <div>
+        <span class="badge badge-primary">Invoice ${n} of ${vendorList(i).length}</span>
+        <h2>${esc(v.name)}</h2>
+        <p class="invoice-from">${esc(v.city)} · GSTIN ${esc(v.gstin)}</p>
+      </div>
+      <div class="invoice-cta">
+        <button class="btn btn-primary btn-lg" id="examine" type="button">${ICON.scan}${review ? "Examine again" : "Examine with memory"}</button>
+        <small>${review ? "Re-runs recall and review" : "Recalls vendor history, then reviews"}</small>
+      </div>
     </div>
-    <table class="lines">
-      <thead><tr><th>Particulars</th><th class="r hide-sm">Qty</th><th class="r hide-sm">Rate</th><th class="r">Amount</th></tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr><td class="label" colspan="3">Subtotal</td><td class="r">${money(i.subtotal)}</td></tr>
-        <tr><td class="label" colspan="3">GST 18%</td><td class="r">${money(i.tax)}</td></tr>
-        <tr><td class="label" colspan="3">Invoice total</td><td class="r">${money(i.total)}</td></tr>
-      </tfoot>
-    </table>
-    <div class="sheet-actions">
-      <p class="story">${esc(i.story)}</p>
-      <button class="btn btn-ink" id="examine" type="button">${review ? "Examine again" : "Examine with memory"}</button>
+    <dl class="meta">
+      <div><dt>Invoice no.</dt><dd>${esc(i.number)}</dd></div>
+      <div><dt>Dated</dt><dd>${fmtDate(i.date)}</dd></div>
+      <div><dt>PO</dt><dd>${esc(i.po)}</dd></div>
+      <div class="${termsFlagged ? "is-flagged" : ""}"><dt>Payment terms</dt><dd>Net ${i.terms_days}</dd></div>
+    </dl>
+    <div class="table-wrap">
+      <table class="lines">
+        <thead><tr><th>Particulars</th><th class="r hide-sm">Qty</th><th class="r hide-sm">Rate</th><th class="r">Amount</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr><td class="label" colspan="${cols}">Subtotal</td><td class="r">${money(i.subtotal)}</td></tr>
+          <tr><td class="label" colspan="${cols}">GST 18%</td><td class="r">${money(i.tax)}</td></tr>
+          <tr class="total"><td class="label" colspan="${cols}">Invoice total</td><td class="r">${money(i.total)}</td></tr>
+        </tfoot>
+      </table>
     </div>
+    <div class="invoice-foot"><p><b>Scenario:</b> ${esc(i.story)}</p></div>
     <ol class="steps" id="steps" hidden></ol>`;
-  // fix colspan on small screens where qty/rate are hidden
-  if (matchMedia("(max-width: 760px)").matches) $("#sheet").querySelectorAll("tfoot .label").forEach((td) => td.colSpan = 1);
   $("#examine").onclick = () => examine(i.key);
 }
 
 // ── Before any review: show what's already remembered about the vendor ──
 async function showKnown(i) {
   const v = vendorOf(i);
-  $("#thread-sub").innerHTML = `Everything remembered about ${esc(v.short)}`;
-  $("#timeline").innerHTML = `<li class="empty"><p class="empty-text">Checking Hindsight…</p></li>`;
+  $("#thread-sub").innerHTML = `Everything remembered about ${esc(v.short)} so far`;
+  $("#timeline").innerHTML = skeleton(3);
   try {
     const { memories } = await api(`/api/vendor/${v.slug}/memory`);
     if (S.current !== i.key) return;
     $("#timeline").innerHTML = memories.length
-      ? memories.map((m) => memItem(m, false)).join("")
-      : `<li class="empty"><p class="empty-text">No memories of ${esc(v.short)} yet. This is a first encounter: LedgerMind can only check the arithmetic,
-         and everything it learns starts with the decision you post.</p></li>`;
+      ? memories.map((m, k) => memItem(m, false, [], [], k)).join("")
+      : `<li class="empty"><div class="mem"><p class="empty-text"><b>Memory is empty for ${esc(v.short)}.</b>
+         Everything LedgerMind learns about them starts with the decision you post.</p></div></li>`;
   } catch (e) {
     $("#timeline").innerHTML = `<li class="empty"><p class="error">${esc(e.message)}</p></li>`;
   }
 }
 
-function memItem(m, withRefs, cites = [], records = []) {
+const skeleton = (n) => Array.from({ length: n }, (_, k) => `<li class="empty" style="--i:${k}"><div class="skeleton"></div></li>`).join("");
+
+function memItem(m, withRefs, cites = [], records = [], k = 0) {
   const rec = records.find((r) => r.ref === m.record);
-  const citedBy = cites.length ? `<span class="cited">cited by flag ${cites.join(", ")}</span>` : "";
-  return `<li class="${cites.length ? "is-cited" : ""}" data-ref="${m.ref || ""}">
-    <div class="mem-date">${withRefs ? `<span class="ref">${m.ref}</span>` : ""}${fmtDate(m.date)}</div>
-    <p class="mem-text">${esc(m.text)}</p>
-    <div class="mem-meta">
-      <span class="kind ${m.type}">${m.type === "observation" ? "learned pattern" : m.type === "experience" ? "experience" : "fact"}</span>
-      ${withRefs ? `<span title="Relevance ${m.score}"><span class="relevance"><i style="width:${Math.min(100, Math.round(m.score * 100))}%"></i></span></span>
-      <span>via ${m.source === "both" ? "both queries" : m.source === "similar" ? "similar-issue search" : "vendor profile"}</span>` : ""}
-      ${citedBy}
+  return `<li class="${cites.length ? "is-cited" : ""}" data-ref="${m.ref || ""}" style="--i:${k}">
+    <div class="mem">
+      <div class="mem-date">${withRefs ? `<span class="mem-ref">${m.ref}</span>` : ""}${fmtDate(m.date)}</div>
+      <p class="mem-text">${esc(m.text)}</p>
+      <div class="mem-meta">
+        <span class="kind ${m.type}">${m.type === "observation" ? "learned pattern" : m.type === "experience" ? "experience" : "fact"}</span>
+        ${withRefs ? `<span title="Relevance ${m.score}"><span class="relevance"><i style="width:${Math.min(100, Math.round(m.score * 100))}%"></i></span></span>
+        <span>${m.source === "both" ? "both queries" : m.source === "similar" ? "similar-issue search" : "vendor profile"}</span>` : ""}
+        ${cites.length ? `<span class="cited">cited by flag ${cites.join(", ")}</span>` : ""}
+      </div>
+      ${rec ? `<details class="record"><summary>Source record ${rec.ref}</summary><p>${esc(rec.text)}</p></details>` : ""}
     </div>
-    ${rec ? `<details class="record"><summary>Source record ${rec.ref}</summary><p>${esc(rec.text)}</p></details>` : ""}
   </li>`;
 }
 
@@ -192,10 +230,13 @@ async function examine(key) {
   const i = inv(key), v = vendorOf(i);
   $("#examine").disabled = true;
   $("#verdict").hidden = true; $("#post").hidden = true; $("#posted").hidden = true;
+  $(".memory-icon").classList.add("is-busy");
+  $("#timeline").innerHTML = skeleton(4);
+  $("#thread-sub").textContent = `Recalling ${v.short} from Hindsight…`;
   const steps = $("#steps");
   steps.hidden = false;
-  const labels = [`Recalling ${v.short}'s billing history from Hindsight`, "Searching memory for past issues resembling these lines",
-    "Reviewing with memory, and again without it, for comparison"];
+  const labels = [`Recalling ${v.short}'s billing history from Hindsight`, "Searching memory for past issues like these lines",
+    "Reviewing with memory, and again without it"];
   steps.innerHTML = labels.map((l) => `<li>${l}</li>`).join("");
   const lis = [...steps.children];
   let n = 0;
@@ -203,12 +244,11 @@ async function examine(key) {
   const tick = setInterval(() => {
     if (n < lis.length - 1) { lis[n].classList.replace("is-on", "is-done"); lis[++n].classList.add("is-on"); }
   }, 900);
-  $("#thread-sub").textContent = "Recalling…";
+  const done = () => { clearInterval(tick); S.busy = false; $(".memory-icon").classList.remove("is-busy"); };
   try {
     const review = await api(`/api/analyze/${key}`, { method: "POST" });
     S.reviews[key] = review;
-    clearInterval(tick);
-    S.busy = false;
+    done();
     if (S.current !== key) return;
     renderSheet(i, review);
     renderVerdict(i, review);
@@ -216,54 +256,55 @@ async function examine(key) {
     renderCoach(i);
     $("#verdict").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
-    clearInterval(tick);
-    S.busy = false;
+    done();
     steps.insertAdjacentHTML("afterend", `<p class="error">${esc(e.message)}</p>`);
     $("#examine").disabled = false;
+    showKnown(i);
   }
 }
 
 function citeMap(review) {
   const map = {};
   review.with_memory.flags.forEach((f, n) => (f.memory_refs || []).forEach((r) => (map[r] ||= []).push(n + 1)));
-  // refs cited in the reasoning count too
-  (review.with_memory.reasoning || "").replace(/\[(M\d+)\]/g, (_, r) => { map[r] ||= []; });
   return map;
 }
 
-function markRefs(text) {
-  return esc(text).replace(/\[(M\d+)\]/g, `<mark data-ref="$1">$1</mark>`);
-}
+const refPill = (r) => `<span class="mem-ref" data-ref="${r}" title="Show memory ${r}">${r}</span>`;
+const markRefs = (text) => esc(text).replace(/\[(M\d+)\]/g, (_, r) => refPill(r));
 
 function renderVerdict(i, review) {
   const w = review.with_memory, s = review.stateless;
   const noMemory = review.memories.length === 0;
   const differs = w.verdict !== s.verdict;
   const flags = w.flags.map((f, n) => `
-    <li class="flag" data-flag="${n + 1}" data-refs="${(f.memory_refs || []).join(" ")}">
+    <li class="flag" data-refs="${(f.memory_refs || []).join(" ")}">
       <span class="no">${n + 1}</span>
       <div><h3>${esc(f.title)}<span class="sev ${f.severity}">${f.severity}</span>${f.recurring ? `<span class="sev recurring">recurring</span>` : ""}</h3>
-        <p>${markRefs(f.detail)}${(f.memory_refs || []).length ? ` <span class="cited">Memory: ${f.memory_refs.map((r) => `<mark data-ref="${r}">${r}</mark>`).join(" ")}</span>` : ""}</p></div>
+        <p>${markRefs(f.detail)} ${(f.memory_refs || []).map(refPill).join(" ")}</p></div>
       <span class="amt">${f.amount_at_risk ? money(f.amount_at_risk) : ""}</span>
     </li>`).join("");
-  $("#verdict").innerHTML = `
-    <div class="verdict-top">
+  const box = $("#verdict");
+  box.dataset.verdict = w.verdict;
+  box.innerHTML = `
+    <div class="verdict-head">
       <div class="stamp ${w.verdict}">${VERDICT[w.verdict].toUpperCase()}</div>
       <div>
         <h2>${esc(w.headline)}</h2>
-        <p class="reason">${markRefs(w.reasoning)}</p>
         <p class="action">${esc(w.recommended_action || "")}</p>
       </div>
     </div>
-    ${flags ? `<ol class="flags">${flags}</ol>` : ""}
     <div class="compare">
-      <div class="without"><h4>A stateless agent, no memory</h4><div class="v ${s.verdict}">${VERDICT[s.verdict]}</div><p>${esc(s.headline)}</p></div>
-      <div class="with"><h4>LedgerMind, with ${review.memories.length} recalled ${review.memories.length === 1 ? "memory" : "memories"}</h4>
-        <div class="v ${w.verdict}">${VERDICT[w.verdict]}${w.amount_at_risk ? ` · ${money(w.amount_at_risk)} at risk` : ""}</div><p>${w.flags.length} flag${w.flags.length === 1 ? "" : "s"} raised</p></div>
+      <div class="compare-col"><h4>Without memory</h4><div class="v ${s.verdict}">${VERDICT[s.verdict]}</div><p>${esc(s.headline)}</p></div>
+      <div class="compare-vs">vs</div>
+      <div class="compare-col with"><h4>${ICON.memory}With ${review.memories.length} ${review.memories.length === 1 ? "memory" : "memories"}</h4>
+        <div class="v ${w.verdict}">${VERDICT[w.verdict]}${w.amount_at_risk ? ` · ${money(w.amount_at_risk)}` : ""}</div>
+        <p>${w.flags.length} flag${w.flags.length === 1 ? "" : "s"} raised${w.amount_at_risk ? " · amount at risk" : ""}</p></div>
+      <p class="compare-note">${noMemory ? "First invoice from this vendor: nothing to remember yet, so both agents agree."
+        : differs ? "Same invoice, same model. The only difference is memory." : "Memory confirms this matches the vendor's history."}</p>
     </div>
-    <p class="compare-note">${noMemory ? "First invoice from this vendor, so there is nothing to remember yet. Both agents see the same thing."
-      : differs ? "Same invoice, same model. The only difference is memory." : "Memory confirms the invoice matches this vendor's history."}</p>`;
-  $("#verdict").hidden = false;
+    ${flags ? `<ol class="flags">${flags}</ol>` : ""}
+    <details class="reasoning" open><summary>Why LedgerMind decided this</summary><p>${markRefs(w.reasoning)}</p></details>`;
+  box.hidden = false;
   bindHighlights();
   const p = posting(i.key);
   $("#post").hidden = !!p;
@@ -275,32 +316,42 @@ function renderThread(i, review) {
   const cites = citeMap(review);
   const q = review.queries;
   const ms = review.timings_ms;
-  let html = `<li class="q"><div class="mem-date">recall() · ${Math.max(ms.profile, ms.similar)} ms</div>
-    <p class="q-text">Two queries to bank <code>${esc(review.bank)}</code>, scoped to tag <code>vendor:${esc(v.slug)}</code>:<br>
-    <q>${esc(q.profile)}</q><br><q>${esc(q.similar.slice(0, 140))}${q.similar.length > 140 ? "…" : ""}</q></p></li>`;
+  let html = `<li class="q" style="--i:0"><div class="mem">
+      <div class="mem-date">recall() · ${Math.max(ms.profile, ms.similar)} ms</div>
+      <p class="q-title">Asked Hindsight two questions about ${esc(v.short)}</p>
+      <ul class="q-list"><li>${esc(q.profile)}</li><li>${esc(q.similar.slice(0, 120))}${q.similar.length > 120 ? "…" : ""}</li></ul>
+    </div></li>`;
   html += review.memories.length
-    ? review.memories.map((m) => memItem(m, true, cites[m.ref] || [], review.records)).join("")
-    : `<li class="empty"><p class="empty-text">Nothing came back. LedgerMind has never seen ${esc(v.short)} before, so this invoice sets the baseline.</p></li>`;
+    ? review.memories.map((m, k) => memItem(m, true, cites[m.ref] || [], review.records, k + 1)).join("")
+    : `<li class="empty" style="--i:1"><div class="mem"><p class="empty-text"><b>Nothing came back.</b> LedgerMind has never seen ${esc(v.short)}, so this invoice sets the baseline.</p></div></li>`;
   const r = S.retained[i.key];
-  if (r) html += retainedItem(r);
+  if (r) html += retainedItem(r, review.memories.length + 2);
   $("#timeline").innerHTML = html;
-  $("#thread-sub").innerHTML = `Recalled before reviewing <b>${esc(i.number)}</b>`;
+  $("#thread-sub").innerHTML = `${review.memories.length} memories recalled for <b>${esc(i.number)}</b> · bank <code>${esc(review.bank)}</code>`;
   bindHighlights();
 }
 
-function retainedItem(r) {
-  return `<li class="w"><div class="mem-date">retain()${r.ms ? ` · ${r.ms} ms` : ""}</div>
-    <p class="q-text">Written back to memory so the next invoice is judged against it:</p>
-    <p class="w-text">${esc(r.content)}</p></li>`;
+function retainedItem(r, k = 0) {
+  return `<li class="w" style="--i:${k}"><div class="mem">
+    <div class="mem-date">retain()${r.ms ? ` · ${r.ms} ms` : ""}</div>
+    <p class="q-title">Written back to memory</p>
+    <p class="mem-text">The invoice, its flags and your note are stored, so the next invoice is judged against them.</p>
+    <details><summary>Show exactly what was stored</summary><pre>${esc(r.content)}</pre></details>
+  </div></li>`;
 }
 
-// hovering a flag or an [M#] mark lights up the memory it relied on
+// hovering a flag or an M# pill lights up the memory it relied on
 function bindHighlights() {
-  document.querySelectorAll("mark[data-ref], .flag[data-refs]").forEach((el) => {
+  document.querySelectorAll(".mem-ref[data-ref], .flag[data-refs]").forEach((el) => {
+    if (el.closest("#timeline")) return;
     const refs = el.dataset.ref ? [el.dataset.ref] : el.dataset.refs.split(" ").filter(Boolean);
-    el.onmouseenter = () => refs.forEach((r) => document.querySelector(`#timeline li[data-ref="${r}"]`)?.classList.add("is-lit"));
-    el.onmouseleave = () => document.querySelectorAll("#timeline li.is-lit").forEach((li) => li.classList.remove("is-lit"));
-    el.onclick = () => document.querySelector(`#timeline li[data-ref="${refs[0]}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const lit = (on) => refs.forEach((r) => document.querySelector(`#timeline li[data-ref="${r}"]`)?.classList.toggle("is-lit", on));
+    el.onmouseenter = () => lit(true);
+    el.onmouseleave = () => lit(false);
+    el.onclick = (e) => {
+      e.stopPropagation();
+      document.querySelector(`#timeline li[data-ref="${refs[0]}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
   });
 }
 
@@ -310,6 +361,7 @@ async function commit(decision) {
   const buttons = document.querySelectorAll(".post-actions .btn");
   buttons.forEach((b) => (b.disabled = true));
   $("#post").querySelector(".error")?.remove();
+  $(".memory-icon").classList.add("is-busy");
   try {
     const res = await api(`/api/commit/${key}`, { method: "POST", body: JSON.stringify({ decision, note: $("#note").value }) });
     S.postings = res.postings;
@@ -319,11 +371,12 @@ async function commit(decision) {
     renderThread(inv(key), S.reviews[key]);
     renderPosted(inv(key));
     renderCoach(inv(key));
-    $("#timeline").lastElementChild?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    $("#timeline li.w")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (e) {
     $("#post").insertAdjacentHTML("beforeend", `<p class="error">${esc(e.message)}</p>`);
   } finally {
     buttons.forEach((b) => (b.disabled = false));
+    $(".memory-icon").classList.remove("is-busy");
   }
 }
 
@@ -331,36 +384,37 @@ function renderPosted(i) {
   const p = posting(i.key);
   const box = $("#posted");
   if (!p) { box.hidden = true; return; }
-  const next = S.invoices.find((x) => x.vendor === i.vendor && !posting(x.key));
+  const list = vendorList(i);
+  const next = list.find((x) => !posting(x.key));
   const disputed = p.decision !== "approve" && S.reviews[i.key];
   box.innerHTML = `
-    <h3>Posted as ${STATUS[p.decision]}, and remembered</h3>
-    <p>LedgerMind retained this invoice, its flags and your note in Hindsight. The next invoice from ${esc(vendorOf(i).short)} will be checked against it.</p>
+    <h3>${ICON.check}Posted as ${STATUS[p.decision]} and saved to memory</h3>
+    <p>The next invoice from ${esc(vendorOf(i).short)} will be checked against this one.</p>
     <div class="row">
-      ${next ? `<button class="btn btn-ink" type="button" data-go="${next.key}">Open invoice ${S.invoices.filter((x) => x.vendor === i.vendor).indexOf(next) + 1}: ${esc(next.number)}</button>` : ""}
-      ${disputed ? `<a class="btn" href="/api/dispute/${i.key}.pdf" target="_blank" rel="noopener">Dispute notice (PDF)</a>` : ""}
+      ${next ? `<button class="btn btn-primary" type="button" data-go="${next.key}">Open invoice ${list.indexOf(next) + 1} · ${esc(next.number)}</button>` : ""}
+      ${disputed ? `<a class="btn" href="/api/dispute/${i.key}.pdf" target="_blank" rel="noopener">${ICON.file}Dispute notice PDF</a>` : ""}
     </div>`;
   box.hidden = false;
-  box.querySelector("[data-go]")?.addEventListener("click", (e) => select(e.target.dataset.go));
+  box.querySelector("[data-go]")?.addEventListener("click", (e) => select(e.currentTarget.dataset.go));
 }
 
-// ── Ask the ledger (reflect) ──────────────────────────────────────────────
+// ── Ask memory (reflect) ──────────────────────────────────────────────────
 async function ask(question) {
   const box = $("#answer");
   const v = vendorOf(inv(S.current));
   box.hidden = false;
-  box.innerHTML = `<p class="empty-text">Reflecting on everything remembered about ${esc(v.short)}…</p>`;
+  box.innerHTML = `<div class="skeleton"></div>`;
   try {
     const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ vendor: v.slug, question }) });
     const html = window.marked ? DOMPurify.sanitize(marked.parse(r.answer)) : esc(r.answer);
-    box.innerHTML = html + (r.based_on.length ? `<p class="basis">Based on ${r.based_on.length} memories via Hindsight reflect()</p>` : "");
+    box.innerHTML = html + (r.based_on.length ? `<p class="basis">Based on ${r.based_on.length} memories · Hindsight reflect()</p>` : "");
   } catch (e) {
     box.innerHTML = `<p class="error">${esc(e.message)}</p>`;
   }
 }
 
 // ── Wiring ────────────────────────────────────────────────────────────────
-$("#vendors").addEventListener("click", (e) => { const t = e.target.closest(".inv-tab"); if (t) select(t.dataset.key); });
+$("#vendors").addEventListener("click", (e) => { const t = e.target.closest(".step"); if (t) select(t.dataset.key); });
 document.querySelectorAll(".post-actions .btn").forEach((b) => b.addEventListener("click", () => commit(b.dataset.decision)));
 $("#ask").addEventListener("submit", (e) => { e.preventDefault(); const q = $("#ask-q").value.trim(); if (q) ask(q); });
 $("#ask-chips").addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (c) { $("#ask-q").value = c.textContent; ask(c.textContent); } });

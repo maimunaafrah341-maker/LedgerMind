@@ -7,71 +7,108 @@
   <meta name="description" content="An accounts-payable agent that remembers every vendor, powered by Hindsight memory.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400;1,6..72,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500;1,6..72,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='4' fill='%232F5D50'/><path d='M9 7v18h14' stroke='%23F5F1E6' stroke-width='3' fill='none'/><circle cx='22' cy='10' r='3' fill='%23E9B949'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234338CA'/><path d='M10 8v16h13' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/><circle cx='22' cy='11' r='3.5' fill='%23F59E0B'/></svg>">
 </head>
 <body>
-  <header class="masthead">
-    <div class="brand">
-      <span class="wordmark">Ledger<em>Mind</em></span>
-      <span class="tagline">Accounts payable that remembers every vendor</span>
+  <!-- ── App bar: brand + the three numbers that tell the story ─────────── -->
+  <header class="appbar">
+    <div class="appbar-inner">
+      <a class="brand" href="/" aria-label="LedgerMind home">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M10 8v16h13" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="22" cy="11" r="3.5" fill="#F59E0B"/></svg>
+        </span>
+        <span>
+          <span class="brand-name">Ledger<em>Mind</em></span>
+          <span class="brand-sub">Accounts Payable with Memory</span>
+        </span>
+      </a>
+      <dl class="stats" id="tally">
+        <div class="stat"><dt>Invoices posted</dt><dd id="t-posted">0</dd></div>
+        <div class="stat"><dt>Flags raised</dt><dd id="t-flags">0</dd></div>
+        <!-- the one number judges should remember: styled in the memory accent -->
+        <div class="stat stat-memory"><dt>Withheld because of memory</dt><dd id="t-saved">₹0</dd></div>
+      </dl>
     </div>
-    <dl class="tally" id="tally">
-      <div><dt>Invoices posted</dt><dd id="t-posted">0</dd></div>
-      <div><dt>Flags raised</dt><dd id="t-flags">0</dd></div>
-      <div class="tally-key"><dt>Withheld because of memory</dt><dd id="t-saved">₹0</dd></div>
-    </dl>
   </header>
 
-  <div class="spread">
-    <!-- ── Vendor book ─────────────────────────────────────────────── -->
-    <nav class="book" aria-label="Vendors and invoices">
-      <p class="book-buyer" id="buyer"></p>
+  <!-- ── Intro: what it does + the 3-step flow (the active step is driven by JS) ── -->
+  <section class="intro">
+    <div class="intro-copy">
+      <h1>An AP agent that <span class="hl">remembers every vendor</span>.</h1>
+      <p>Most invoice checks forget each invoice once it's paid. LedgerMind recalls each vendor's history from
+        <b>Hindsight</b> memory before reviewing, so a disputed charge that comes back under a new name gets caught.</p>
+    </div>
+    <ol class="flow" id="flow">
+      <li data-step="1"><span class="flow-no">1</span><div><b>Examine</b><span>Recall memory, then review</span></div></li>
+      <li data-step="2"><span class="flow-no">2</span><div><b>Decide</b><span>Approve, hold or reject</span></div></li>
+      <li data-step="3"><span class="flow-no">3</span><div><b>Remember</b><span>Decision is written to memory</span></div></li>
+    </ol>
+  </section>
+
+  <div class="layout">
+    <!-- ── Vendors ─────────────────────────────────────────────────────── -->
+    <nav class="sidebar" aria-label="Vendors and invoices">
+      <div class="sidebar-head">
+        <h2 class="section-title">Vendors</h2>
+        <p class="buyer" id="buyer"></p>
+      </div>
       <ol class="vendors" id="vendors"></ol>
-      <div class="book-foot">
-        <p class="bank">Memory bank <code id="bank-id">…</code></p>
-        <button class="link-btn" id="reset-btn" type="button">Wipe memory and replay the demo</button>
+      <div class="sidebar-foot">
+        <p>Memory bank <code id="bank-id">…</code></p>
+        <button class="btn-link" id="reset-btn" type="button">Wipe memory &amp; replay demo</button>
       </div>
     </nav>
 
-    <!-- ── Folio: the invoice under review ─────────────────────────── -->
-    <main class="folio" id="folio">
-      <div class="guide" id="guide" aria-live="polite"></div>
+    <!-- ── Workspace: coach, invoice, verdict, decision ────────────────── -->
+    <main class="workspace" id="folio">
+      <div class="coach" id="guide" aria-live="polite"></div>
 
-      <article class="sheet" id="sheet" aria-live="polite"></article>
+      <article class="card invoice" id="sheet" aria-live="polite"></article>
 
-      <section class="verdict" id="verdict" hidden></section>
+      <section class="card verdict" id="verdict" hidden></section>
 
-      <section class="post" id="post" hidden>
-        <label for="note" class="post-label">AP note, written to memory with your decision</label>
+      <section class="card post" id="post" hidden>
+        <h3 class="card-title">Your decision</h3>
+        <label for="note" class="field-label">AP note (saved to memory with your decision)</label>
         <textarea id="note" rows="3"></textarea>
         <div class="post-actions">
-          <button class="btn btn-approve" data-decision="approve" type="button">Approve and post</button>
-          <button class="btn btn-hold" data-decision="hold" type="button">Hold and dispute</button>
-          <button class="btn btn-quiet" data-decision="reject" type="button">Reject</button>
+          <button class="btn btn-success" data-decision="approve" type="button">Approve &amp; post</button>
+          <button class="btn btn-danger" data-decision="hold" type="button">Hold &amp; dispute</button>
+          <button class="btn btn-ghost" data-decision="reject" type="button">Reject</button>
         </div>
       </section>
 
-      <section class="posted" id="posted" hidden></section>
+      <section class="card posted" id="posted" hidden></section>
     </main>
 
-    <!-- ── Memory thread ───────────────────────────────────────────── -->
-    <aside class="thread" id="thread" aria-label="Hindsight memory">
-      <div class="thread-head">
-        <h2>Memory thread</h2>
-        <p class="thread-sub" id="thread-sub">What LedgerMind knows about this vendor</p>
-        <p class="thread-explain">This is LedgerMind's long-term memory, stored in Hindsight.
-          <span class="dot dot-recall"></span> Amber: memories recalled <em>before</em> a review.
-          <span class="dot dot-write"></span> Green: what gets written back <em>after</em> you post.</p>
+    <!-- ── Memory panel: sticky, amber-tinted, always about the selected vendor ── -->
+    <aside class="memory" id="thread" aria-label="Hindsight memory">
+      <div class="memory-head">
+        <div class="memory-title">
+          <span class="memory-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          </span>
+          <div>
+            <h2>Memory</h2>
+            <p class="memory-vendor" id="memory-vendor">…</p>
+          </div>
+        </div>
+        <p class="memory-sub" id="thread-sub">What LedgerMind knows about this vendor</p>
+        <p class="legend">
+          <span><i class="dot dot-recall"></i>Recalled before review</span>
+          <span><i class="dot dot-write"></i>Written back after posting</span>
+        </p>
       </div>
+
       <ol class="timeline" id="timeline"></ol>
 
       <form class="ask" id="ask">
-        <label for="ask-q"><span class="serif">Ask the ledger</span> about <span id="ask-vendor">this vendor</span></label>
+        <label for="ask-q" class="ask-label">Ask memory about <span id="ask-vendor">this vendor</span></label>
         <div class="ask-row">
           <input id="ask-q" autocomplete="off" placeholder="What should I check before paying them?">
-          <button class="btn btn-ink" type="submit">Ask</button>
+          <button class="btn btn-primary btn-sm" type="submit">Ask</button>
         </div>
         <div class="chips" id="ask-chips"></div>
         <div class="answer" id="answer" hidden></div>
@@ -79,7 +116,7 @@
     </aside>
   </div>
 
-  <footer class="colophon">
+  <footer class="footer">
     Memory by <a href="https://hindsight.vectorize.io" target="_blank" rel="noopener">Hindsight</a> ·
     reasoning on Groq (<span id="model"></span>) · built for HackwithHyderabad 3.0
   </footer>
