@@ -56,13 +56,13 @@ Memory is the core of the review loop, not a side feature. Every Hindsight call 
 | `create_bank` | First visit | Creates one **memory bank per browser workspace** (`ledgermind-<id>`), with a mission telling Hindsight to track rates, terms, discrepancies and resolutions, and to treat renamed charges as the same issue. Every judge gets a clean slate. |
 | `recall` × 2 (in parallel) | Before each review | ① **Vendor profile**: usual rates, line items, totals, terms and decisions. ② **Similar-issue search** built from this invoice's line descriptions, which is how "HSD price escalation" finds the August "fuel surcharge" dispute. Both are scoped with the tag `vendor:<slug>` (`any_strict`) and return world facts, experiences and consolidated **observations**. `include_chunks` also returns the verbatim source records, so exact rates and terms reach the model. |
 | `retain` | When the clerk posts | Writes a narrative record: invoice number, date, PO, every line and rate, payment terms, each flag with its severity, the decision, and the clerk's resolution note (for example "credit note CN-DCCL-0098 for ₹16,894.65"). It is timestamped with the **invoice date** so the timeline is real, tagged `vendor:<slug>` and `decision:<x>`, and keyed by `document_id` so a re-post replaces the old record instead of duplicating it. |
-| `reflect` | "Ask the ledger" box | Answers free-form questions such as *"What should I check before paying Deccan?"* by reasoning over the vendor's memories, and shows how many memories the answer is based on. |
+| `reflect` | "Ask memory" box | Answers free-form questions such as *"What should I check before paying Deccan?"* by reasoning over the vendor's memories, and shows how many memories the answer is based on. |
 | `delete_bank` | "Wipe memory and replay" | Resets the workspace so the story can be replayed from nothing. |
 
-**Memory is visible in the UI.** The right-hand *Memory thread* shows the two recall queries and their latency, and
+**Memory is visible in the UI.** The right-hand *Memory* panel shows the two recall queries and their latency, and
 each recalled memory with its date, type (fact or learned pattern), relevance and source record. When a flag relies
 on a memory, it is labelled **"cited by flag N"**. Hovering a flag lights up the memory behind it. After posting,
-the exact text written with `retain()` appears at the end of the thread.
+the exact text written with `retain()` appears at the end of the panel.
 
 ---
 
@@ -71,12 +71,12 @@ the exact text written with `retain()` appears at the end of the thread.
 ```
 Browser (vanilla JS)                          Flask (app.py)
 ┌────────────────────────┐   /api/analyze   ┌───────────────────────────────────────────────┐
-│ Vendor book            │ ───────────────▶ │ memory.recall_vendor ─▶ Hindsight recall ×2   │
+│ Vendor cards           │ ───────────────▶ │ memory.recall_vendor ─▶ Hindsight recall ×2   │
 │ Invoice folio + flags  │                  │ agent.review                                  │
 │ Verdict: memory vs     │ ◀─────────────── │   ├ rule checks (arithmetic, dup numbers)     │
 │   stateless            │                  │   ├ Groq gpt-oss-120b WITH memories   ┐ in    │
-│ Memory thread          │   /api/commit    │   └ Groq gpt-oss-120b WITHOUT memory  ┘ para. │
-│ Ask the ledger         │ ───────────────▶ │ memory.retain_invoice ─▶ Hindsight retain     │
+│ Memory panel           │   /api/commit    │   └ Groq gpt-oss-120b WITHOUT memory  ┘ para. │
+│ Ask memory             │ ───────────────▶ │ memory.retain_invoice ─▶ Hindsight retain     │
 └────────────────────────┘   /api/ask       │ memory.ask ───────────▶ Hindsight reflect     │
                                             │ SQLite: posted invoices + saved reviews       │
                              /api/dispute   │ generator.py: dispute-notice PDF (reportlab)  │
@@ -95,10 +95,10 @@ Browser (vanilla JS)                          Flask (app.py)
 ### More than a demo
 
 - **Memory vs. stateless comparison** on every invoice, so you can see what memory changes.
-- **Flags cite specific memories**, and the reasoning links `[M2]`-style references to the thread.
+- **Flags cite specific memories**, and the reasoning turns `[M2]`-style references into pills that light up the memory.
 - **Amount at risk** per flag, plus a running "withheld because of memory" total in the header.
 - **One-click dispute notice PDF** for held invoices.
-- **Ask the ledger**: vendor Q&A through Hindsight `reflect`.
+- **Ask memory**: vendor Q&A through Hindsight `reflect`.
 - **Per-session memory banks and a replay button**, so the demo is repeatable for every viewer.
 - Responsive down to phone width, with light and dark modes.
 
@@ -131,8 +131,8 @@ copy .env.example .env          # macOS/Linux: cp .env.example .env, then fill i
 python app.py
 ```
 
-Open http://127.0.0.1:5000. Click **Deccan Cold Chain → 1 → Examine with memory → Approve and post**, then do
-invoice 2 (**Hold and dispute**) and invoice 3, and watch the memory thread.
+Open http://127.0.0.1:5000. Click **Deccan Cold Chain → 1 → Examine with memory → Approve & post**, then do
+invoice 2 (**Hold & dispute**) and invoice 3, and watch the Memory panel.
 
 ### Deploy on Render
 
