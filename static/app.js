@@ -39,7 +39,7 @@ function renderBook() {
     const tabs = S.invoices.filter((i) => i.vendor === v.slug).map((i, n) => {
       const p = posting(i.key);
       return `<button class="inv-tab ${S.current === i.key ? "is-active" : ""}" data-key="${i.key}" data-status="${p ? p.decision : ""}" type="button">
-        <b>${n + 1}</b><span>${p ? STATUS[p.decision] : fmtDate(i.date).replace(/ \d{4}$/, "")}</span></button>`;
+        <b>Inv ${n + 1}</b><span>${p ? STATUS[p.decision] : fmtDate(i.date).replace(/ \d{4}$/, "")}</span></button>`;
     }).join("");
     return `<li class="vendor ${v.headline ? "is-headline" : ""}"><h3>${esc(v.short)}</h3><p>${esc(v.category)}</p><div class="inv-tabs">${tabs}</div></li>`;
   }).join("");
@@ -64,11 +64,50 @@ function select(key) {
   $("#ask-chips").innerHTML = [`What should I check before paying ${v.short}?`, "Have they ever been disputed?", "What are their usual rates and terms?"]
     .map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("");
   $("#answer").hidden = true;
-  $("#guide").hidden = !v.headline || S.postings.length >= 3;
   const review = S.reviews[key];
   if (review) { renderVerdict(i, review); renderThread(i, review); }
   else { $("#verdict").hidden = true; $("#post").hidden = true; showKnown(i); }
   renderPosted(i);
+  renderCoach(i);
+}
+
+// ── Coach: tells a first-time viewer where they are and what to click next ──
+function renderCoach(i) {
+  const v = vendorOf(i);
+  const list = S.invoices.filter((x) => x.vendor === i.vendor);
+  const n = list.indexOf(i) + 1;
+  const p = posting(i.key), review = S.reviews[i.key];
+  const phase = p ? 3 : review ? 2 : 1;
+  const next = list.find((x) => !posting(x.key) && x.key !== i.key);
+  const nextNo = next ? list.indexOf(next) + 1 : 0;
+  const trail = list.map((x, k) => {
+    const px = posting(x.key);
+    return `<span class="trail-item ${x.key === i.key ? "is-here" : ""} ${px ? `is-${px.decision}` : ""}">Invoice ${k + 1}${px ? ` · ${STATUS[px.decision]}` : ""}</span>`;
+  }).join(`<span class="trail-sep" aria-hidden="true"></span>`);
+  const text = {
+    1: n === 1
+      ? `<b>Start here.</b> LedgerMind checks supplier invoices before they are paid, and remembers every supplier.
+         This is ${esc(v.short)}'s first invoice, so its memory is empty. Examine it to see the baseline.`
+      : `<b>Now watch memory work.</b> Before reviewing, LedgerMind will recall what it learned from
+         ${n > 2 ? "the earlier invoices" : "invoice 1"} (right-hand panel) and use it to judge this one.`,
+    2: `<b>Read the verdict below</b>, then post a decision at the bottom. Your decision and note are saved to
+        LedgerMind's memory${review?.memories.length ? `. It found ${review.memories.length} memories this time` : ""}.`,
+    3: next ? `<b>Saved to memory.</b> Open invoice ${nextNo} and see whether LedgerMind spots anything using what it just learned.`
+            : `<b>All of ${esc(v.short)}'s invoices are done.</b> Ask the ledger a question on the right, or pick another supplier.`,
+  }[phase];
+  const btn = phase === 1 ? `<button class="btn btn-ink" type="button" data-coach="examine">Examine invoice ${n}</button>`
+    : phase === 2 ? `<button class="btn" type="button" data-coach="decide">Go to decision</button>`
+    : next ? `<button class="btn btn-ink" type="button" data-coach="next">Open invoice ${nextNo}</button>` : "";
+  $("#guide").innerHTML = `
+    <div class="coach-top"><span class="coach-step">Step ${phase} of 3 · ${["Examine", "Decide", "Next invoice"][phase - 1]}</span>
+      <span class="trail">${trail}</span></div>
+    <div class="coach-row"><p>${text}</p>${btn}</div>`;
+  const b = $("#guide [data-coach]");
+  if (b) b.onclick = () => {
+    if (b.dataset.coach === "examine") { examine(i.key); $("#steps")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    else if (b.dataset.coach === "decide") $("#post").scrollIntoView({ behavior: "smooth", block: "center" });
+    else select(next.key);
+  };
 }
 
 function renderSheet(i, review) {
@@ -174,6 +213,8 @@ async function examine(key) {
     renderSheet(i, review);
     renderVerdict(i, review);
     renderThread(i, review);
+    renderCoach(i);
+    $("#verdict").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     clearInterval(tick);
     S.busy = false;
@@ -277,6 +318,7 @@ async function commit(decision) {
     renderBook(); renderTally();
     renderThread(inv(key), S.reviews[key]);
     renderPosted(inv(key));
+    renderCoach(inv(key));
     $("#timeline").lastElementChild?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (e) {
     $("#post").insertAdjacentHTML("beforeend", `<p class="error">${esc(e.message)}</p>`);

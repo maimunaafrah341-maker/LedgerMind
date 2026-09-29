@@ -3,7 +3,7 @@
 **An accounts-payable agent that remembers every vendor.**
 Built for HackwithHyderabad 3.0 on [Hindsight](https://hindsight.vectorize.io) agent memory and Groq.
 
-**Live demo:** https://ledgermind.onrender.com <!-- replace with your Render URL after deploying -->
+**Live demo:** https://ledgermind-nlj7.onrender.com (free tier: the first load after idling can take ~40 s)
 
 ![LedgerMind reviewing a vendor's third invoice, with the memory thread on the right](docs/screenshots/hold.png)
 

@@ -37,11 +37,7 @@
 
     <!-- ── Folio: the invoice under review ─────────────────────────── -->
     <main class="folio" id="folio">
-      <div class="guide" id="guide">
-        <p><strong>How to watch the demo:</strong> examine Deccan Cold Chain's invoices in order, 1 then 2 then 3,
-          and post each one. The memory thread on the right shows what LedgerMind recalls before each review
-          and what it writes back afterwards.</p>
-      </div>
+      <div class="guide" id="guide" aria-live="polite"></div>
 
       <article class="sheet" id="sheet" aria-live="polite"></article>
 
@@ -65,6 +61,9 @@
       <div class="thread-head">
         <h2>Memory thread</h2>
         <p class="thread-sub" id="thread-sub">What LedgerMind knows about this vendor</p>
+        <p class="thread-explain">This is LedgerMind's long-term memory, stored in Hindsight.
+          <span class="dot dot-recall"></span> Amber: memories recalled <em>before</em> a review.
+          <span class="dot dot-write"></span> Green: what gets written back <em>after</em> you post.</p>
       </div>
       <ol class="timeline" id="timeline"></ol>
 

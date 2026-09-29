@@ -106,8 +106,27 @@ code { font-family: var(--mono); font-size: .85em; }
 
 /* ── Folio ────────────────────────────────────────────────────────────── */
 .folio { padding: 24px 32px 48px; min-width: 0; }
-.guide { max-width: 760px; margin-bottom: 18px; padding: 10px 14px; border-left: 4px solid var(--memory); background: var(--memory-wash); font-size: 14px; }
-.guide p { margin: 0; }
+/* Coach: step, trail of invoices, one sentence, one button */
+.guide { max-width: 760px; margin-bottom: 18px; padding: 12px 16px 14px; border: 1.5px solid var(--ink); border-left: 6px solid var(--memory); background: var(--memory-wash); font-size: 14.5px; }
+.guide:empty { display: none; }
+.coach-top { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.coach-step { font: 600 13px var(--mono); color: var(--ink); }
+.trail { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; }
+.trail-item { padding: 1px 7px; border: 1px solid var(--line); border-radius: 2px; color: var(--ink-3); background: var(--sheet); }
+.trail-item.is-here { border-color: var(--ink); color: var(--ink); font-weight: 600; }
+.trail-item.is-approve { color: var(--green); border-color: var(--green); }
+.trail-item.is-hold, .trail-item.is-reject { color: var(--red); border-color: var(--red); }
+.trail-sep { width: 14px; border-top: 1px solid var(--ink-3); }
+.coach-row { display: flex; align-items: center; gap: 16px; }
+.coach-row p { margin: 0; flex: 1; }
+.coach-row .btn { flex: none; }
+.thread-explain { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: 0; margin-left: 2px; }
+.dot-recall { background: var(--memory); }
+.dot-write { background: var(--green); }
+@media (max-width: 760px) {
+  .coach-row { flex-direction: column; align-items: stretch; }
+}
 
 .sheet {
   position: relative; max-width: 760px; background: var(--sheet);
